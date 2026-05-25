@@ -2,8 +2,6 @@
 
 MacLauncher is a custom launcher for macOS designed with a sleek, 10-foot television interface. Enjoy a cinematic Hero Banner Carousel and smooth, endless horizontal scrolling for your applications, providing a premium couch-friendly experience.
 
-![MacLauncher Interface](./screenshot.png)
-
 ## Features
 
 - **TV-Style Interface**: A gorgeous, dark-themed UI reminiscent of premium streaming platforms.
