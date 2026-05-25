@@ -8,7 +8,7 @@ MacLauncher is a custom launcher for macOS designed with a sleek, 10-foot televi
 - **Hero Banner Carousel**: Massive, immersive featured content area.
 - **Dynamic Metadata**: Streamed descriptions, logos, and high-quality background images fetched automatically based on the app's name.
 - **D-Pad Accelerated Scrolling**: Navigation accelerates seamlessly when holding down directional inputs.
-![image](screenshot.png)
+![image](ui.png)
 ## How to Use
 
 1. **Build and Run**: Use the provided `build.sh` script to compile and run the application.
