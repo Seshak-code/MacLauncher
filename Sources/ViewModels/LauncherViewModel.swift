@@ -50,6 +50,9 @@ final class LauncherViewModel {
     // Web Metadata RAM Streaming
     var webMetadataCache: [String: WebMetadata] = [:]
     
+    // Dynamic App/Web Metadata (RAM-only)
+    var appMetadataCache: [UUID: AppMetadata] = [:]
+    
     // App Switcher state
     var isAppSwitcherVisible: Bool = false
     var appSwitcherItems: [AppSwitcherItem] = []
@@ -721,6 +724,114 @@ final class LauncherViewModel {
         }
     }
     
+    
+    func fetchAppMetadata(for item: LauncherItem) {
+        if appMetadataCache[item.id] != nil {
+            return
+        }
+        
+        // Initialize loading state
+        appMetadataCache[item.id] = AppMetadata(
+            title: item.name,
+            description: item.subtitle ?? "Loading details...",
+            imageURL: nil,
+            cachedImage: nil,
+            backdropURL: nil,
+            cachedBackdrop: nil
+        )
+        
+        Task {
+            let query = item.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            var fetchedDesc = item.subtitle ?? "Launch \(item.name) directly on your Apple TV inspired interface."
+            var imageUrlStr: String? = nil
+            var backdropUrlStr: String? = nil
+            
+            // 1. Try TVMaze single search
+            if let tvMazeURL = URL(string: "https://api.tvmaze.com/singlesearch/shows?q=\(query)") {
+                var request = URLRequest(url: tvMazeURL)
+                request.timeoutInterval = 5.0
+                if let (data, response) = try? await URLSession.shared.data(for: request),
+                   let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    
+                    if let summaryHtml = json["summary"] as? String {
+                        fetchedDesc = summaryHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    
+                    if let imageDict = json["image"] as? [String: Any] {
+                        imageUrlStr = imageDict["original"] as? String ?? imageDict["medium"] as? String
+                        backdropUrlStr = imageUrlStr
+                    }
+                }
+            }
+            
+            // 2. If no image found on TVMaze, fallback to iTunes search for app metadata
+            if imageUrlStr == nil, let iTunesURL = URL(string: "https://itunes.apple.com/search?term=\(query)&limit=1") {
+                var request = URLRequest(url: iTunesURL)
+                request.timeoutInterval = 5.0
+                if let (data, response) = try? await URLSession.shared.data(for: request),
+                   let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let results = json["results"] as? [[String: Any]],
+                   let firstResult = results.first {
+                    
+                    if let description = firstResult["description"] as? String {
+                        fetchedDesc = description
+                    } else if let longDescription = firstResult["longDescription"] as? String {
+                        fetchedDesc = longDescription
+                    }
+                    
+                    if let artworkUrl = firstResult["artworkUrl100"] as? String {
+                        // Request higher resolution artwork
+                        imageUrlStr = artworkUrl.replacingOccurrences(of: "100x100bb", with: "512x512bb")
+                    }
+                    
+                    if let screenshotUrls = firstResult["screenshotUrls"] as? [String], !screenshotUrls.isEmpty {
+                        backdropUrlStr = screenshotUrls.first
+                    }
+                }
+            }
+            
+            // 3. Last fallback: generate a beautiful, topic-themed mockup background/cover art from public placeholder service
+            if imageUrlStr == nil {
+                imageUrlStr = "https://loremflickr.com/640/360/\(query)"
+                backdropUrlStr = "https://loremflickr.com/1280/720/\(query)"
+            } else if backdropUrlStr == nil {
+                backdropUrlStr = imageUrlStr
+            }
+            
+            // Download images in background
+            var cachedImg: NSImage? = nil
+            var cachedBack: NSImage? = nil
+            
+            if let imgUrlStr = imageUrlStr, let imgUrl = URL(string: imgUrlStr) {
+                if let (imgData, _) = try? await URLSession.shared.data(from: imgUrl) {
+                    cachedImg = NSImage(data: imgData)
+                }
+            }
+            
+            if let backUrlStr = backdropUrlStr, let backUrl = URL(string: backUrlStr) {
+                if let (backData, _) = try? await URLSession.shared.data(from: backUrl) {
+                    cachedBack = NSImage(data: backData)
+                }
+            }
+            
+            let metadata = AppMetadata(
+                title: item.name,
+                description: fetchedDesc,
+                imageURL: imageUrlStr,
+                cachedImage: cachedImg,
+                backdropURL: backdropUrlStr,
+                cachedBackdrop: cachedBack
+            )
+            
+            await MainActor.run {
+                self.appMetadataCache[item.id] = metadata
+            }
+        }
+    }
+    
     private func launchItem(_ item: LauncherItem) {
         launchedAppBundleID = item.iconBundleID
         NSWorkspace.shared.launchItem(item.url, bundleID: item.iconBundleID) { success in
@@ -1105,20 +1216,20 @@ final class LauncherViewModel {
     
     static func defaults() -> [LauncherSection] {
         return [
-            LauncherSection(label: "Most Used Shortcuts", type: .app, items: [
+            LauncherSection(label: "Trending Now", type: .app, items: [
                 LauncherItem(name: "Calculator", iconEmoji: "🧮", iconBundleID: "com.apple.calculator", accentHex: "#FF9F0A", url: "/System/Applications/Calculator.app", itemType: .app, subtitle: "Recently Open • Active"),
                 LauncherItem(name: "Terminal", iconEmoji: "💻", iconBundleID: "com.apple.Terminal", accentHex: "#30D158", url: "/System/Applications/Utilities/Terminal.app", itemType: .app, subtitle: "CommandLine Tool"),
                 LauncherItem(name: "YouTube", iconEmoji: "📺", accentHex: "#FF0000", url: "https://www.youtube.com", itemType: .website, subtitle: "Media Stream • 4K Video"),
                 LauncherItem(name: "Chess", iconEmoji: "♟️", iconBundleID: "com.apple.Chess", accentHex: "#BF5AF2", url: "/System/Applications/Chess.app", itemType: .game, subtitle: "Active • 2 Achievements"),
                 LauncherItem(name: "System Settings", iconEmoji: "⚙️", iconBundleID: "com.apple.systempreferences", accentHex: "#8E8E93", url: "/System/Applications/System Settings.app", itemType: .app, subtitle: "Settings Config")
             ]),
-            LauncherSection(label: "Web Shortcuts", type: .website, items: [
+            LauncherSection(label: "Web Entertainment", type: .website, items: [
                 LauncherItem(name: "Google", iconEmoji: "🔍", accentHex: "#4285F4", url: "https://www.google.com", itemType: .website, subtitle: "Web Search Engine"),
                 LauncherItem(name: "YouTube", iconEmoji: "📺", accentHex: "#FF0000", url: "https://www.youtube.com", itemType: .website, subtitle: "Media Stream • 4K Video"),
                 LauncherItem(name: "GitHub", iconEmoji: "🐙", accentHex: "#24292F", url: "https://github.com", itemType: .website, subtitle: "Code Hosting Repository"),
                 LauncherItem(name: "Netflix", iconEmoji: "🎬", accentHex: "#E50914", url: "https://www.netflix.com", itemType: .website, subtitle: "Netflix TV streaming")
             ]),
-            LauncherSection(label: "Games & Entertainment", type: .game, items: [
+            LauncherSection(label: "Arcade & Gaming Specials", type: .game, items: [
                 LauncherItem(name: "Chess", iconEmoji: "♟️", iconBundleID: "com.apple.Chess", accentHex: "#BF5AF2", url: "/System/Applications/Chess.app", itemType: .game, subtitle: "Active • 2 Achievements"),
                 LauncherItem(name: "Apple Arcade", iconEmoji: "🕹️", accentHex: "#FF2D55", url: "https://arcade.apple.com", itemType: .game, subtitle: "Join Arcade Hub"),
                 LauncherItem(name: "Game Center", iconEmoji: "🎯", accentHex: "#007AFF", url: "/System/Library/CoreServices/Game Center.app", itemType: .game, subtitle: "John and 3 online")

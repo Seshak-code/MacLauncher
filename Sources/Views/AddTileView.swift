@@ -8,8 +8,11 @@ struct AddTileView: View {
     @Environment(LauncherViewModel.self) var vm
     @Environment(TileFrameRegistry.self) var registry
 
+    private var cardWidth: CGFloat { 290 }
+    private var cardHeight: CGFloat { 165 }
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             ZStack {
                 // Dashed border card container
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -18,29 +21,29 @@ struct AddTileView: View {
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .stroke(
                                 isFocused ? .white.opacity(0.7) : .white.opacity(0.2),
-                                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .miter, miterLimit: 10, dash: [6, 4], dashPhase: 0)
+                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .miter, miterLimit: 10, dash: [6, 4], dashPhase: 0)
                             )
                     )
                     .shadow(color: isFocused ? .white.opacity(0.1) : .clear, radius: 15, x: 0, y: 8)
 
                 // Plus Icon
                 Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .light))
+                    .font(.system(size: 36, weight: .light))
                     .foregroundStyle(isFocused ? .white : .white.opacity(0.4))
             }
-            .frame(width: 170, height: 110)
+            .frame(width: cardWidth, height: cardHeight)
             .scaleEffect(isFocused ? 1.12 : 1.0)
-            .offset(y: isFocused ? -4 : 0)
+            .offset(y: isFocused ? -6 : 0)
             .animation(.spring(response: 0.28, dampingFraction: 0.65), value: isFocused)
 
             // Label
             Text("Add Shortcut")
-                .font(.system(size: 13, weight: isFocused ? .semibold : .regular))
+                .font(.system(size: 14, weight: isFocused ? .semibold : .regular))
                 .foregroundStyle(isFocused ? .white : .white.opacity(0.45))
                 .lineLimit(1)
-                .frame(maxWidth: 160)
+                .frame(maxWidth: cardWidth - 10)
         }
-        .frame(width: 170)
+        .frame(width: cardWidth)
         .contentShape(Rectangle())
         .onTapGesture {
             vm.addTargetSectionID = sectionID

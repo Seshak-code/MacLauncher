@@ -16,7 +16,7 @@ struct TileView: View {
     // Micro-animation states
     @State private var gearRotation: Double = 0.0
     @State private var bounceOffset: CGFloat = 0.0
-    @State private var sheenOffset: CGFloat = -220.0
+    @State private var sheenOffset: CGFloat = -350.0
 
     private var accentColor: Color {
         Color(hex: item.accentHex) ?? .blue
@@ -25,6 +25,9 @@ struct TileView: View {
     private var rgb: (Double, Double, Double) {
         accentColor.rgbComponents
     }
+
+    private var cardWidth: CGFloat { 290 }
+    private var cardHeight: CGFloat { 165 }
 
     private var finalTiltWidth: CGFloat {
         let hover = tiltWidth
@@ -39,7 +42,7 @@ struct TileView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             ZStack {
                 // Base frosted card
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -54,46 +57,58 @@ struct TileView: View {
                                 isFocused
                                 ? accentColor.opacity(0.8)
                                 : Color.white.opacity(0.08),
-                                lineWidth: isFocused ? 2.0 : 1.0
+                                lineWidth: isFocused ? 2.5 : 1.0
                             )
                     )
                     // High elevation glow shadow on focus, offset dynamically by tilt
                     .shadow(
-                        color: isFocused ? accentColor.opacity(0.45) : .clear,
-                        radius: isFocused ? 26 : 0,
-                        x: isFocused ? finalTiltWidth * -12.0 : 0,
-                        y: isFocused ? finalTiltHeight * 12.0 + 10.0 : 0
+                        color: isFocused ? accentColor.opacity(0.5) : .clear,
+                        radius: isFocused ? 28 : 0,
+                        x: isFocused ? finalTiltWidth * -15.0 : 0,
+                        y: isFocused ? finalTiltHeight * 15.0 + 10.0 : 0
                     )
 
-                // Icon (Emoji, Web-streamed Icon or App Icon)
-                Group {
-                    if item.itemType == .website,
-                       let metadata = vm.webMetadataCache[item.url],
-                       let nsImage = metadata.cachedImage {
-                        Image(nsImage: nsImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 56, height: 56)
-                            .cornerRadius(12)
-                    } else if let bundleID = item.iconBundleID,
-                       !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                        
-                        let appIcon = NSWorkspace.shared.icon(forFile: appURL.path)
-                        Image(nsImage: appIcon)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 54, height: 54)
-                            .cornerRadius(12)
-                            .rotationEffect(.degrees(gearRotation))
-                            .offset(y: bounceOffset)
-                    } else {
-                        // Fallback styled emoji
-                        Text(item.iconEmoji)
-                            .font(.system(size: 44))
-                            .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
-                            .rotationEffect(.degrees(gearRotation))
-                            .offset(y: bounceOffset)
+                // Background artwork if dynamic metadata is available (Netflix style)
+                if let metadata = vm.appMetadataCache[item.id],
+                   let nsImage = metadata.cachedImage ?? metadata.cachedBackdrop {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: cardWidth, height: cardHeight)
+                        .clipped()
+                        .cornerRadius(22)
+                        .overlay(
+                            // Dark gradient overlay for text readability
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.65)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                } else {
+                    // Fallback visual layout (Frosted panel with centered App icon/Emoji)
+                    Group {
+                        if let bundleID = item.iconBundleID,
+                           !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                            
+                            let appIcon = NSWorkspace.shared.icon(forFile: appURL.path)
+                            Image(nsImage: appIcon)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 72, height: 72)
+                                .cornerRadius(16)
+                                .rotationEffect(.degrees(gearRotation))
+                                .offset(y: bounceOffset)
+                                .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                        } else {
+                            // Fallback styled emoji
+                            Text(item.iconEmoji)
+                                .font(.system(size: 60))
+                                .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                                .rotationEffect(.degrees(gearRotation))
+                                .offset(y: bounceOffset)
+                        }
                     }
                 }
 
@@ -104,24 +119,24 @@ struct TileView: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
-                    .frame(width: 170, height: 110)
+                    .frame(width: cardWidth, height: cardHeight)
                     .offset(x: sheenOffset)
                     .mask(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                     )
                     .onAppear {
-                        sheenOffset = -220.0
+                        sheenOffset = -cardWidth - 50
                         withAnimation(.linear(duration: 2.5).repeatForever(autoreverses: false)) {
-                            sheenOffset = 220.0
+                            sheenOffset = cardWidth + 50
                         }
                     }
                 }
             }
-            .frame(width: 170, height: 110)
+            .frame(width: cardWidth, height: cardHeight)
             
             // 3D Parallax Tilt Effects
             .scaleEffect(isFocused ? 1.12 : 1.0)
-            .offset(y: isFocused ? -4 : 0)
+            .offset(y: isFocused ? -6 : 0)
             .rotation3DEffect(
                 .degrees(Double(finalTiltHeight * -14.0)),
                 axis: (x: 1.0, y: 0.0, z: 0.0)
@@ -134,10 +149,10 @@ struct TileView: View {
                 guard isFocused else { return }
                 switch phase {
                 case .active(let point):
-                    let dx = point.x - 85.0 // half of 170
-                    let dy = point.y - 55.0 // half of 110
-                    tiltWidth = dx / 85.0
-                    tiltHeight = dy / 55.0
+                    let dx = point.x - (cardWidth / 2.0)
+                    let dy = point.y - (cardHeight / 2.0)
+                    tiltWidth = dx / (cardWidth / 2.0)
+                    tiltHeight = dy / (cardHeight / 2.0)
                 case .ended:
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                         tiltWidth = 0.0
@@ -148,26 +163,33 @@ struct TileView: View {
             .animation(.spring(response: 0.28, dampingFraction: 0.65), value: isFocused)
 
             // Label
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Text(item.name)
-                    .font(.system(size: 13, weight: isFocused ? .semibold : .regular))
-                    .foregroundStyle(isFocused ? .white : .white.opacity(0.55))
+                    .font(.system(size: 14, weight: isFocused ? .semibold : .regular))
+                    .foregroundStyle(isFocused ? .white : .white.opacity(0.6))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 160)
+                    .frame(maxWidth: cardWidth - 10)
                 
-                if let subtitle = item.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(isFocused ? .white.opacity(0.75) : .white.opacity(0.4))
+                let subtitleText: String = {
+                    if let metadata = vm.appMetadataCache[item.id], metadata.description != "Loading details..." {
+                        return metadata.description
+                    }
+                    return item.subtitle ?? ""
+                }()
+                
+                if !subtitleText.isEmpty {
+                    Text(subtitleText)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(isFocused ? .white.opacity(0.7) : .white.opacity(0.4))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: 160)
+                        .frame(maxWidth: cardWidth - 10)
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: isFocused)
         }
-        .frame(width: 170)
+        .frame(width: cardWidth)
         .contentShape(Rectangle())
         .onTapGesture {
             vm.focusedPosition = position
@@ -196,14 +218,12 @@ struct TileView: View {
             }
         }
         .onChange(of: isFocused, initial: true) { _, focused in
+            // Always fetch metadata on load/focus
+            vm.fetchAppMetadata(for: item)
+            
             if focused {
                 vm.updateAccent(for: item)
                 
-                // Trigger web metadata fetch if website
-                if item.itemType == .website {
-                    vm.fetchWebMetadata(for: item.url)
-                }
-
                 // Micro-animations
                 let isSettings = item.iconBundleID == "com.apple.systempreferences" || item.name.lowercased().contains("settings") || item.iconEmoji == "⚙️"
                 if isSettings {
@@ -226,11 +246,9 @@ struct TileView: View {
             }
         }
         .onAppear {
+            vm.fetchAppMetadata(for: item)
             if isFocused {
                 vm.updateAccent(for: item)
-                if item.itemType == .website {
-                    vm.fetchWebMetadata(for: item.url)
-                }
             }
         }
     }

@@ -350,19 +350,31 @@ final class GameControllerManager {
         // Trigger immediately
         triggerDirection(dir)
         
-        // Schedule repeat timer
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+        // Schedule repeat timer (50% faster starting delay -> 0.2s down from 0.4s)
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
             guard let self = self, self.activeHeldDirection == dir else { return }
             
-            // Trigger repeat
+            // Trigger first repeat
             self.triggerDirection(dir)
             
-            // Start fast repeat
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
-                guard let self = self, self.activeHeldDirection == dir else { return }
-                self.triggerDirection(dir)
-            }
-            RunLoop.main.add(self.repeatTimer!, forMode: .common)
+            // Start self-rescheduling accelerated repeat loop (50% faster starting speed -> 0.08s down from 0.12s)
+            self.scheduleNextRepeat(for: dir, currentInterval: 0.08)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        repeatTimer = timer
+    }
+    
+    private func scheduleNextRepeat(for dir: MoveDirection, currentInterval: TimeInterval) {
+        guard activeHeldDirection == dir else { return }
+        
+        let decayFactor = 0.85
+        let minInterval = 0.03
+        let nextInterval = max(minInterval, currentInterval * decayFactor)
+        
+        let timer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: false) { [weak self] _ in
+            guard let self = self, self.activeHeldDirection == dir else { return }
+            self.triggerDirection(dir)
+            self.scheduleNextRepeat(for: dir, currentInterval: nextInterval)
         }
         RunLoop.main.add(timer, forMode: .common)
         repeatTimer = timer
