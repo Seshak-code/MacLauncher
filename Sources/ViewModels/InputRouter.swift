@@ -23,8 +23,12 @@ final class InputRouter {
         viewModel?.returnToLauncher()
     }
     
-    func handleAppSwitcher() {
-        viewModel?.toggleAppSwitcher()
+    func handleAppSwitcherTap() {
+        viewModel?.handleAppSwitcherTap()
+    }
+    
+    func handleAppSwitcherHold() {
+        viewModel?.handleAppSwitcherHold()
     }
     
     func handleKeyboardToggle() {

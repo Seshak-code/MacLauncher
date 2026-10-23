@@ -64,12 +64,13 @@ final class LauncherViewModel {
     var virtualKeyboardText: String = ""
     var keyboardFocusedRow: Int = 0
     var keyboardFocusedCol: Int = 0
-    private var onKeyboardSubmit: ((String) -> Void)? = nil
+    var onKeyboardSubmit: ((String) -> Void)? = nil
     private var onKeyboardCancel: (() -> Void)? = nil
     
     // Track which app we launched so we can watch for its termination
     private var launchedAppBundleID: String? = nil
     private var workspaceObservers: [NSObjectProtocol] = []
+    private var recentlyActiveApps: [NSRunningApplication] = []
     
     // Dock Plist Watcher
     private var dockWatcherSource: DispatchSourceFileSystemObject?
@@ -147,6 +148,8 @@ final class LauncherViewModel {
             guard let self = self else { return }
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             
+            self.recentlyActiveApps.removeAll { $0.processIdentifier == app.processIdentifier }
+            
             // If the app that quit is one we launched, bring launcher back
             if let launchedID = self.launchedAppBundleID, app.bundleIdentifier == launchedID {
                 self.launchedAppBundleID = nil
@@ -155,12 +158,22 @@ final class LauncherViewModel {
         }
         workspaceObservers.append(terminateObserver)
         
+        // Watch for app activations
+        let activateObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            self.handleAppActivated(app)
+        }
+        workspaceObservers.append(activateObserver)
+        
         // Watch for app deactivations — if the launched app loses focus to something else, clear tracking
         let deactivateObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didDeactivateApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] notification in
-            // No action needed, but could be used for future enhancements
             _ = self
         }
         workspaceObservers.append(deactivateObserver)
@@ -439,7 +452,7 @@ final class LauncherViewModel {
     
     // MARK: - Virtual Keyboard Logic
     
-    func showKeyboard(initialText: String, prompt: String, onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+    func showKeyboard(initialText: String, prompt: String, onSubmit: ((String) -> Void)? = nil, onCancel: (() -> Void)? = nil) {
         virtualKeyboardText = initialText
         keyboardPrompt = prompt
         onKeyboardSubmit = onSubmit
@@ -461,13 +474,7 @@ final class LauncherViewModel {
         if isKeyboardVisible {
             cancelKeyboard()
         } else {
-            showKeyboard(initialText: "", prompt: "Type Here") { text in
-                if !text.isEmpty {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        GlobalInputSimulator.shared.simulateTyping(text)
-                    }
-                }
-            } onCancel: {}
+            showKeyboard(initialText: "", prompt: "Type Here", onSubmit: nil, onCancel: nil)
         }
     }
     
@@ -511,21 +518,48 @@ final class LauncherViewModel {
     
     private func activateKeyboardFocusedKey() {
         let key = keyboardLayout[keyboardFocusedRow][keyboardFocusedCol]
-        switch key {
-        case "Space":
-            virtualKeyboardText += " "
-        case "Backspace":
-            if !virtualKeyboardText.isEmpty {
-                virtualKeyboardText.removeLast()
+        
+        if onKeyboardSubmit != nil {
+            // Accumulation Mode
+            switch key {
+            case "Space":
+                virtualKeyboardText += " "
+            case "Backspace":
+                if !virtualKeyboardText.isEmpty {
+                    virtualKeyboardText.removeLast()
+                }
+            case "Clear":
+                virtualKeyboardText = ""
+            case "Cancel":
+                cancelKeyboard()
+            case "Done":
+                submitKeyboard()
+            default:
+                virtualKeyboardText += key
             }
-        case "Clear":
-            virtualKeyboardText = ""
-        case "Cancel":
-            cancelKeyboard()
-        case "Done":
-            submitKeyboard()
-        default:
-            virtualKeyboardText += key
+        } else {
+            // Instant Typing Mode
+            switch key {
+            case "Space":
+                virtualKeyboardText += " "
+                GlobalInputSimulator.shared.postVirtualKeyCode(49)
+            case "Backspace":
+                if !virtualKeyboardText.isEmpty {
+                    virtualKeyboardText.removeLast()
+                }
+                GlobalInputSimulator.shared.postVirtualKeyCode(51)
+            case "Clear":
+                virtualKeyboardText = ""
+                GlobalInputSimulator.shared.simulateClear()
+            case "Cancel":
+                cancelKeyboard()
+            case "Done":
+                GlobalInputSimulator.shared.postVirtualKeyCode(36)
+                submitKeyboard()
+            default:
+                virtualKeyboardText += key
+                GlobalInputSimulator.shared.postUnicodeCharacter(key)
+            }
         }
     }
     
@@ -535,6 +569,7 @@ final class LauncherViewModel {
             isPhoneKeyboardActive = false
         }
         onKeyboardSubmit?(virtualKeyboardText)
+        virtualKeyboardText = ""
         DispatchQueue.main.async {
             GlobalVirtualKeyboardWindow.shared.hide()
         }
@@ -546,6 +581,7 @@ final class LauncherViewModel {
             isPhoneKeyboardActive = false
         }
         onKeyboardCancel?()
+        virtualKeyboardText = ""
         DispatchQueue.main.async {
             GlobalVirtualKeyboardWindow.shared.hide()
         }
@@ -740,72 +776,313 @@ final class LauncherViewModel {
             cachedBackdrop: nil
         )
         
+        let normalizedName = item.name.lowercased()
+        let normalizedURL = item.url.lowercased()
+        
+        // Popular overrides to return immediately and set appropriate brand styling
+        if normalizedName.contains("vs code") || normalizedName.contains("visual studio code") || normalizedName.contains("vscode") || item.iconBundleID == "com.microsoft.VSCode" {
+            loadVSCodeMetadata(for: item)
+        } else if normalizedName.contains("google") && (normalizedURL.contains("google.com") || item.itemType == .website) {
+            loadGoogleMetadata(for: item)
+        } else if normalizedName.contains("github") && (normalizedURL.contains("github.com") || item.itemType == .website) {
+            loadGitHubMetadata(for: item)
+        } else if item.itemType == .website || item.url.hasPrefix("http://") || item.url.hasPrefix("https://") {
+            fetchWebsiteMetadata(for: item)
+        } else {
+            fetchAppOrGameMetadata(for: item)
+        }
+    }
+    
+    private func loadVSCodeMetadata(for item: LauncherItem) {
+        var localIcon: NSImage? = nil
+        if let bundleID = item.iconBundleID,
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            localIcon = NSWorkspace.shared.icon(forFile: appURL.path)
+        } else if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode") {
+            localIcon = NSWorkspace.shared.icon(forFile: appURL.path)
+        } else if item.url.hasSuffix(".app") {
+            localIcon = NSWorkspace.shared.icon(forFile: item.url)
+        }
+        
+        if localIcon == nil {
+            localIcon = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: nil)
+        }
+        
+        let metadata = AppMetadata(
+            title: "Visual Studio Code",
+            description: "Code editing. Redefined. Free. Open source. Runs everywhere. Build and debug modern web and cloud applications.",
+            imageURL: nil,
+            cachedImage: localIcon,
+            backdropURL: nil,
+            cachedBackdrop: nil
+        )
+        self.appMetadataCache[item.id] = metadata
+    }
+    
+    private func loadGoogleMetadata(for item: LauncherItem) {
+        Task {
+            var logoImage: NSImage? = nil
+            if let logoURL = URL(string: "https://www.google.com/favicon.ico"),
+               let (data, _) = try? await URLSession.shared.data(from: logoURL) {
+                logoImage = NSImage(data: data)
+            }
+            
+            let metadata = AppMetadata(
+                title: "Google",
+                description: "Search the world's information, including webpages, images, videos and more. Google has many special features to help you find exactly what you're looking for.",
+                imageURL: "https://www.google.com/favicon.ico",
+                cachedImage: logoImage,
+                backdropURL: nil,
+                cachedBackdrop: nil
+            )
+            
+            await MainActor.run {
+                self.appMetadataCache[item.id] = metadata
+            }
+        }
+    }
+    
+    private func loadGitHubMetadata(for item: LauncherItem) {
+        Task {
+            var logoImage: NSImage? = nil
+            if let logoURL = URL(string: "https://github.githubassets.com/favicons/favicon.svg"),
+               let (data, _) = try? await URLSession.shared.data(from: logoURL) {
+                logoImage = NSImage(data: data)
+            }
+            if logoImage == nil, let logoURL = URL(string: "https://github.com/favicon.ico"),
+               let (data, _) = try? await URLSession.shared.data(from: logoURL) {
+                logoImage = NSImage(data: data)
+            }
+            
+            let metadata = AppMetadata(
+                title: "GitHub",
+                description: "GitHub is a developer platform that allows developers to create, store, manage and share their code. Build software with GitHub's AI developer tools.",
+                imageURL: "https://github.com/favicon.ico",
+                cachedImage: logoImage,
+                backdropURL: nil,
+                cachedBackdrop: nil
+            )
+            
+            await MainActor.run {
+                self.appMetadataCache[item.id] = metadata
+            }
+        }
+    }
+    
+    private func fetchWebsiteMetadata(for item: LauncherItem) {
+        let urlString = item.url.hasPrefix("http") ? item.url : "https://" + item.url
+        guard let url = URL(string: urlString) else { return }
+        
+        Task {
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+                request.timeoutInterval = 8.0
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    return
+                }
+                
+                guard let html = String(data: data, encoding: .utf8) else { return }
+                
+                var title = item.name
+                if let titleRange = html.range(of: "<title>(.*?)</title>", options: [.regularExpression, .caseInsensitive]) {
+                    let fullMatch = html[titleRange]
+                    title = fullMatch.replacingOccurrences(of: "<title>", with: "", options: .caseInsensitive)
+                        .replacingOccurrences(of: "</title>", with: "", options: .caseInsensitive)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                
+                var description = item.subtitle ?? "No description available."
+                let descPatterns = [
+                    #"<meta[^>]*property=["']og:description["'][^>]*content=["'](.*?)["']"#,
+                    #"<meta[^>]*content=["'](.*?)["'][^>]*property=["']og:description["']"#,
+                    #"<meta[^>]*name=["']description["'][^>]*content=["'](.*?)["']"#,
+                    #"<meta[^>]*content=["'](.*?)["'][^>]*name=["']description["']"#
+                ]
+                for pattern in descPatterns {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)) {
+                        if let range = Range(match.range(at: 1), in: html) {
+                            description = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            break
+                        }
+                    }
+                }
+                
+                var backdropURLString: String? = nil
+                let backdropPatterns = [
+                    #"<meta[^>]*property=["']og:image["'][^>]*content=["'](.*?)["']"#,
+                    #"<meta[^>]*content=["'](.*?)["'][^>]*property=["']og:image["']"#,
+                    #"<meta[^>]*name=["']twitter:image["'][^>]*content=["'](.*?)["']"#
+                ]
+                for pattern in backdropPatterns {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)) {
+                        if let range = Range(match.range(at: 1), in: html) {
+                            backdropURLString = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            break
+                        }
+                    }
+                }
+                
+                var iconURLString: String? = nil
+                let iconPatterns = [
+                    #"<link[^>]*rel=["']apple-touch-icon["'][^>]*href=["'](.*?)["']"#,
+                    #"<link[^>]*href=["'](.*?)["'][^>]*rel=["']apple-touch-icon["']"#,
+                    #"<link[^>]*rel=["']shortcut icon["'][^>]*href=["'](.*?)["']"#,
+                    #"<link[^>]*rel=["']icon["'][^>]*href=["'](.*?)["']"#,
+                    #"<link[^>]*href=["'](.*?)["'][^>]*rel=["']icon["']"#
+                ]
+                for pattern in iconPatterns {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)) {
+                        if let range = Range(match.range(at: 1), in: html) {
+                            iconURLString = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            break
+                        }
+                    }
+                }
+                
+                var resolvedIconURL: URL? = nil
+                if let iconStr = iconURLString {
+                    if iconStr.hasPrefix("http://") || iconStr.hasPrefix("https://") {
+                        resolvedIconURL = URL(string: iconStr)
+                    } else if iconStr.hasPrefix("//") {
+                        resolvedIconURL = URL(string: "https:" + iconStr)
+                    } else {
+                        resolvedIconURL = URL(string: iconStr, relativeTo: url)
+                    }
+                }
+                if resolvedIconURL == nil {
+                    resolvedIconURL = URL(string: "/favicon.ico", relativeTo: url)
+                }
+                
+                var resolvedBackdropURL: URL? = nil
+                if let backdropStr = backdropURLString {
+                    if backdropStr.hasPrefix("http://") || backdropStr.hasPrefix("https://") {
+                        resolvedBackdropURL = URL(string: backdropStr)
+                    } else if backdropStr.hasPrefix("//") {
+                        resolvedBackdropURL = URL(string: "https:" + backdropStr)
+                    } else {
+                        resolvedBackdropURL = URL(string: backdropStr, relativeTo: url)
+                    }
+                }
+                
+                var loadedLogoImage: NSImage? = nil
+                if let resolvedLogo = resolvedIconURL {
+                    if let (imgData, imgResponse) = try? await URLSession.shared.data(from: resolvedLogo),
+                       let httpImgResponse = imgResponse as? HTTPURLResponse, httpImgResponse.statusCode == 200 {
+                        loadedLogoImage = NSImage(data: imgData)
+                    }
+                }
+                
+                var loadedBackdropImage: NSImage? = nil
+                if let resolvedBackdrop = resolvedBackdropURL {
+                    if let (imgData, imgResponse) = try? await URLSession.shared.data(from: resolvedBackdrop),
+                       let httpImgResponse = imgResponse as? HTTPURLResponse, httpImgResponse.statusCode == 200 {
+                        loadedBackdropImage = NSImage(data: imgData)
+                    }
+                }
+                
+                let metadata = AppMetadata(
+                    title: title,
+                    description: description,
+                    imageURL: resolvedIconURL?.absoluteString,
+                    cachedImage: loadedLogoImage,
+                    backdropURL: resolvedBackdropURL?.absoluteString,
+                    cachedBackdrop: loadedBackdropImage
+                )
+                
+                await MainActor.run {
+                    self.appMetadataCache[item.id] = metadata
+                }
+            } catch {
+                print("Failed to fetch web metadata for \(item.name): \(error)")
+                await MainActor.run {
+                    self.appMetadataCache[item.id] = AppMetadata(
+                        title: item.name,
+                        description: item.subtitle ?? "Failed to load website details.",
+                        imageURL: nil,
+                        cachedImage: nil,
+                        backdropURL: nil,
+                        cachedBackdrop: nil
+                    )
+                }
+            }
+        }
+    }
+    
+    private func fetchAppOrGameMetadata(for item: LauncherItem) {
         Task {
             let query = item.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
             var fetchedDesc = item.subtitle ?? "Launch \(item.name) directly on your Apple TV inspired interface."
             var imageUrlStr: String? = nil
             var backdropUrlStr: String? = nil
             
-            // 1. Try TVMaze single search
-            if let tvMazeURL = URL(string: "https://api.tvmaze.com/singlesearch/shows?q=\(query)") {
-                var request = URLRequest(url: tvMazeURL)
-                request.timeoutInterval = 5.0
-                if let (data, response) = try? await URLSession.shared.data(for: request),
-                   let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    
-                    if let summaryHtml = json["summary"] as? String {
-                        fetchedDesc = summaryHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                    
-                    if let imageDict = json["image"] as? [String: Any] {
-                        imageUrlStr = imageDict["original"] as? String ?? imageDict["medium"] as? String
-                        backdropUrlStr = imageUrlStr
+            let isMediaApp = ["netflix", "youtube", "plex", "hulu", "disney", "prime video", "vlc", "hbo", "twitch", "trailer"].contains { item.name.lowercased().contains($0) }
+            
+            if isMediaApp {
+                if let tvMazeURL = URL(string: "https://api.tvmaze.com/singlesearch/shows?q=\(query)") {
+                    var request = URLRequest(url: tvMazeURL)
+                    request.timeoutInterval = 5.0
+                    if let (data, response) = try? await URLSession.shared.data(for: request),
+                       let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        
+                        if let summaryHtml = json["summary"] as? String {
+                            fetchedDesc = summaryHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                        
+                        if let imageDict = json["image"] as? [String: Any] {
+                            imageUrlStr = imageDict["original"] as? String ?? imageDict["medium"] as? String
+                            backdropUrlStr = imageUrlStr
+                        }
                     }
                 }
             }
             
-            // 2. If no image found on TVMaze, fallback to iTunes search for app metadata
-            if imageUrlStr == nil, let iTunesURL = URL(string: "https://itunes.apple.com/search?term=\(query)&limit=1") {
-                var request = URLRequest(url: iTunesURL)
-                request.timeoutInterval = 5.0
-                if let (data, response) = try? await URLSession.shared.data(for: request),
-                   let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let results = json["results"] as? [[String: Any]],
-                   let firstResult = results.first {
-                    
-                    if let description = firstResult["description"] as? String {
-                        fetchedDesc = description
-                    } else if let longDescription = firstResult["longDescription"] as? String {
-                        fetchedDesc = longDescription
-                    }
-                    
-                    if let artworkUrl = firstResult["artworkUrl100"] as? String {
-                        // Request higher resolution artwork
-                        imageUrlStr = artworkUrl.replacingOccurrences(of: "100x100bb", with: "512x512bb")
-                    }
-                    
-                    if let screenshotUrls = firstResult["screenshotUrls"] as? [String], !screenshotUrls.isEmpty {
-                        backdropUrlStr = screenshotUrls.first
-                    }
-                }
-            }
-            
-            // 3. Last fallback: generate a beautiful, topic-themed mockup background/cover art from public placeholder service
             if imageUrlStr == nil {
-                imageUrlStr = "https://loremflickr.com/640/360/\(query)"
-                backdropUrlStr = "https://loremflickr.com/1280/720/\(query)"
-            } else if backdropUrlStr == nil {
-                backdropUrlStr = imageUrlStr
+                let iTunesURLStr = "https://itunes.apple.com/search?term=\(query)&entity=macSoftware&limit=1"
+                if let iTunesURL = URL(string: iTunesURLStr) {
+                    var request = URLRequest(url: iTunesURL)
+                    request.timeoutInterval = 5.0
+                    if let (data, response) = try? await URLSession.shared.data(for: request),
+                       let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let results = json["results"] as? [[String: Any]],
+                       let firstResult = results.first {
+                        
+                        if let description = firstResult["description"] as? String {
+                            fetchedDesc = description
+                        } else if let longDescription = firstResult["longDescription"] as? String {
+                            fetchedDesc = longDescription
+                        }
+                        
+                        if let artworkUrl = firstResult["artworkUrl512"] as? String ?? firstResult["artworkUrl100"] as? String {
+                            imageUrlStr = artworkUrl
+                        }
+                        
+                        if let screenshotUrls = firstResult["screenshotUrls"] as? [String], !screenshotUrls.isEmpty {
+                            backdropUrlStr = screenshotUrls.first
+                        }
+                    }
+                }
             }
             
-            // Download images in background
             var cachedImg: NSImage? = nil
             var cachedBack: NSImage? = nil
             
-            if let imgUrlStr = imageUrlStr, let imgUrl = URL(string: imgUrlStr) {
+            if let bundleID = item.iconBundleID,
+               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                cachedImg = NSWorkspace.shared.icon(forFile: appURL.path)
+            } else if item.url.hasSuffix(".app") {
+                cachedImg = NSWorkspace.shared.icon(forFile: item.url)
+            }
+            
+            if cachedImg == nil, let imgUrlStr = imageUrlStr, let imgUrl = URL(string: imgUrlStr) {
                 if let (imgData, _) = try? await URLSession.shared.data(from: imgUrl) {
                     cachedImg = NSImage(data: imgData)
                 }
@@ -847,7 +1124,137 @@ final class LauncherViewModel {
     // MARK: - App Switcher Logic
     
     func toggleAppSwitcher() {
-        GlobalInputSimulator.shared.triggerOSAppSwitcher()
+        if isAppSwitcherVisible {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isAppSwitcherVisible = false
+            }
+        } else {
+            self.refreshAppSwitcherItems()
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isAppSwitcherVisible = true
+                appSwitcherFocusedIndex = 0
+            }
+        }
+    }
+    
+    private func handleAppActivated(_ app: NSRunningApplication) {
+        guard app.activationPolicy == .regular else { return }
+        guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        
+        // Remove app from history if it exists, to place it at the front (most recent)
+        recentlyActiveApps.removeAll { $0.processIdentifier == app.processIdentifier }
+        recentlyActiveApps.insert(app, at: 0)
+        
+        if recentlyActiveApps.count > 10 {
+            recentlyActiveApps.removeLast()
+        }
+        
+        // System-wide calibration: resize frontmost application window to fit the safe area
+        if overscanHorizontal > 0 || overscanVertical > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                guard let self = self else { return }
+                self.applySystemCalibration(to: app)
+            }
+        }
+    }
+    
+    func handleAppSwitcherTap() {
+        // Clean history of terminated apps
+        recentlyActiveApps.removeAll { $0.isTerminated }
+        
+        let isLauncherActive = NSApp.isActive
+        
+        if isLauncherActive {
+            // Launcher is active. Switch to the last active app
+            if let targetApp = recentlyActiveApps.first {
+                targetApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            } else {
+                let runningGUIApps = NSWorkspace.shared.runningApplications.filter { app in
+                    app.activationPolicy == .regular && app.bundleIdentifier != Bundle.main.bundleIdentifier
+                }
+                if let firstRunning = runningGUIApps.first {
+                    firstRunning.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                }
+            }
+        } else {
+            // Launcher is in the background. Get the frontmost app
+            guard let frontmost = NSWorkspace.shared.frontmostApplication else { return }
+            
+            if let firstActive = recentlyActiveApps.first, firstActive.processIdentifier == frontmost.processIdentifier {
+                if recentlyActiveApps.count > 1 {
+                    let secondActive = recentlyActiveApps[1]
+                    secondActive.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                } else {
+                    self.returnToLauncher()
+                }
+            } else {
+                if let targetApp = recentlyActiveApps.first {
+                    targetApp.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                } else {
+                    self.returnToLauncher()
+                }
+            }
+        }
+    }
+    
+    func handleAppSwitcherHold() {
+        self.returnToLauncher()
+        self.refreshAppSwitcherItems()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            self.isAppSwitcherVisible = true
+            self.appSwitcherFocusedIndex = 0
+        }
+        showContinuityNotification(text: "App Switcher", subtext: "Launcher App Switcher Active", icon: "square.stack.3d.up.fill")
+    }
+    
+    func applySystemCalibration(to app: NSRunningApplication) {
+        Task {
+            let pid = app.processIdentifier
+            let axApp = AXUIElementCreateApplication(pid)
+            
+            var value: AnyObject?
+            let result = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value)
+            
+            guard result == .success, let windows = value as? [AXUIElement] else { return }
+            
+            guard let screen = NSScreen.main else { return }
+            let screenFrame = screen.frame
+            
+            let targetX = self.overscanHorizontal
+            let targetY = self.overscanVertical
+            let targetWidth = screenFrame.width - (2 * self.overscanHorizontal)
+            let targetHeight = screenFrame.height - (2 * self.overscanVertical)
+            
+            for window in windows {
+                var isFS: AnyObject?
+                if AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &isFS) == .success,
+                   let fsBool = isFS as? Bool, fsBool {
+                    AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, kCFBooleanFalse)
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                
+                var positionPoint = CGPoint(x: targetX, y: targetY)
+                if let axPosition = AXValueCreate(AXValueType(rawValue: kAXValueCGPointType)!, &positionPoint) {
+                    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, axPosition)
+                }
+                
+                var sizeValue = CGSize(width: targetWidth, height: targetHeight)
+                if let axSize = AXValueCreate(AXValueType(rawValue: kAXValueCGSizeType)!, &sizeValue) {
+                    AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, axSize)
+                }
+            }
+            
+            DiagnosticsManager.shared.log("Applied system-wide calibration to \(app.localizedName ?? "app") (PID \(pid))")
+        }
+    }
+    
+    func applySystemCalibrationToAllRunningApps() {
+        let runningGUIApps = NSWorkspace.shared.runningApplications.filter { app in
+            app.activationPolicy == .regular && app.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
+        for app in runningGUIApps {
+            applySystemCalibration(to: app)
+        }
     }
     
     func refreshAppSwitcherItems() {
@@ -979,6 +1386,7 @@ final class LauncherViewModel {
     func saveOverscan() {
         UserDefaults.standard.set(Double(overscanHorizontal), forKey: "overscanHorizontal")
         UserDefaults.standard.set(Double(overscanVertical), forKey: "overscanVertical")
+        applySystemCalibrationToAllRunningApps()
     }
 
     // MARK: - App Launch (Always Fullscreen)

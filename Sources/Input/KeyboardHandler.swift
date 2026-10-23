@@ -15,6 +15,10 @@ final class KeyboardHandler {
     private var optionKeyPressTime: CFAbsoluteTime = 0.0
     private var commandKeyPressTime: CFAbsoluteTime = 0.0
     private var wasOtherKeyPressed = false
+    private var optionHoldTimer: Timer?
+    private var commandHoldTimer: Timer?
+    private var isOptionHoldTriggered = false
+    private var isCommandHoldTriggered = false
     
     // Scroll debouncing to prevent rapid-fire triggers on trackpads
     private var lastScrollTime: CFAbsoluteTime = 0.0
@@ -30,6 +34,11 @@ final class KeyboardHandler {
             guard let self = self else { return event }
             guard self.isExternalEvent(event) else { return event }
             self.wasOtherKeyPressed = true
+            
+            self.optionHoldTimer?.invalidate()
+            self.optionHoldTimer = nil
+            self.commandHoldTimer?.invalidate()
+            self.commandHoldTimer = nil
             
             switch event.keyCode {
             case 123: // Left Arrow
@@ -105,6 +114,11 @@ final class KeyboardHandler {
             guard let self = self else { return }
             guard self.isExternalEvent(event) else { return }
             self.wasOtherKeyPressed = true
+            
+            self.optionHoldTimer?.invalidate()
+            self.optionHoldTimer = nil
+            self.commandHoldTimer?.invalidate()
+            self.commandHoldTimer = nil
         }
     }
 
@@ -119,14 +133,29 @@ final class KeyboardHandler {
                     isOptionDown = true
                     optionKeyPressTime = CFAbsoluteTimeGetCurrent()
                     wasOtherKeyPressed = false
+                    isOptionHoldTriggered = false
+                    
+                    optionHoldTimer?.invalidate()
+                    optionHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                        guard let self = self else { return }
+                        if self.isOptionDown && !self.wasOtherKeyPressed {
+                            self.isOptionHoldTriggered = true
+                            DispatchQueue.main.async {
+                                self.router.handleAppSwitcherHold()
+                            }
+                        }
+                    }
                 }
             } else {
                 if isOptionDown {
                     isOptionDown = false
+                    optionHoldTimer?.invalidate()
+                    optionHoldTimer = nil
+                    
                     let duration = CFAbsoluteTimeGetCurrent() - optionKeyPressTime
-                    if !wasOtherKeyPressed && duration < 0.4 {
+                    if !wasOtherKeyPressed && !isOptionHoldTriggered && duration < 0.5 {
                         DispatchQueue.main.async { [weak self] in
-                            self?.router.handleAppSwitcher()
+                            self?.router.handleAppSwitcherTap()
                         }
                     }
                 }
@@ -141,14 +170,29 @@ final class KeyboardHandler {
                     isCommandDown = true
                     commandKeyPressTime = CFAbsoluteTimeGetCurrent()
                     wasOtherKeyPressed = false
+                    isCommandHoldTriggered = false
+                    
+                    commandHoldTimer?.invalidate()
+                    commandHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                        guard let self = self else { return }
+                        if self.isCommandDown && !self.wasOtherKeyPressed {
+                            self.isCommandHoldTriggered = true
+                            DispatchQueue.main.async {
+                                self.router.handleAppSwitcherHold()
+                            }
+                        }
+                    }
                 }
             } else {
                 if isCommandDown {
                     isCommandDown = false
+                    commandHoldTimer?.invalidate()
+                    commandHoldTimer = nil
+                    
                     let duration = CFAbsoluteTimeGetCurrent() - commandKeyPressTime
-                    if !wasOtherKeyPressed && duration < 0.4 {
+                    if !wasOtherKeyPressed && !isCommandHoldTriggered && duration < 0.5 {
                         DispatchQueue.main.async { [weak self] in
-                            self?.router.handleAppSwitcher()
+                            self?.router.handleAppSwitcherTap()
                         }
                     }
                 }

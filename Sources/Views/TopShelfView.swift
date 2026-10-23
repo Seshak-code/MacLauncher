@@ -69,7 +69,7 @@ struct TopShelfView: View {
                 ZStack {
                     // 1. Immersive Backdrop Artwork
                     if let metadata = vm.appMetadataCache[item.id],
-                       let nsImage = metadata.cachedBackdrop ?? metadata.cachedImage {
+                       let nsImage = metadata.cachedBackdrop {
                         Image(nsImage: nsImage)
                             .resizable()
                             .scaledToFill()
@@ -308,7 +308,15 @@ struct TopShelfView: View {
                                 } else {
                                     // Styled App logo fallback
                                     VStack(spacing: 16) {
-                                        if let bundleID = item.iconBundleID,
+                                        if let metadata = vm.appMetadataCache[item.id],
+                                           let cachedLogo = metadata.cachedImage {
+                                            Image(nsImage: cachedLogo)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .frame(width: 72, height: 72)
+                                                .cornerRadius(16)
+                                                .shadow(color: accentColor.opacity(0.4), radius: 12, x: 0, y: 6)
+                                        } else if let bundleID = item.iconBundleID,
                                            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                                             let appIcon = NSWorkspace.shared.icon(forFile: appURL.path)
                                             Image(nsImage: appIcon)

@@ -6,32 +6,41 @@ struct VirtualKeyboard: View {
     var body: some View {
         VStack(spacing: 20) {
             // Header / Title & Current Text Input display
-            VStack(spacing: 8) {
-                Text(vm.keyboardPrompt)
+            if vm.onKeyboardSubmit != nil {
+                VStack(spacing: 8) {
+                    Text(vm.keyboardPrompt)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .textCase(.uppercase)
+                        .tracking(1.0)
+                    
+                    // Frosted Text Input Preview
+                    HStack {
+                        Text(vm.virtualKeyboardText.isEmpty ? "Start typing..." : vm.virtualKeyboardText)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(vm.virtualKeyboardText.isEmpty ? .white.opacity(0.3) : .white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 14)
+                        
+                        Spacer()
+                    }
+                    .frame(maxWidth: 600)
+                    .background(.white.opacity(0.06))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .padding(.bottom, 10)
+            } else {
+                Text("Virtual Keyboard")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.5))
                     .textCase(.uppercase)
                     .tracking(1.0)
-                
-                // Frosted Text Input Preview
-                HStack {
-                    Text(vm.virtualKeyboardText.isEmpty ? "Start typing..." : vm.virtualKeyboardText)
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(vm.virtualKeyboardText.isEmpty ? .white.opacity(0.3) : .white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 14)
-                    
-                    Spacer()
-                }
-                .frame(maxWidth: 600)
-                .background(.white.opacity(0.06))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(.white.opacity(0.12), lineWidth: 1)
-                )
+                    .padding(.bottom, 10)
             }
-            .padding(.bottom, 10)
 
             // Grid of Keys
             VStack(spacing: 12) {

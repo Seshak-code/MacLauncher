@@ -359,6 +359,60 @@ final class GlobalInputSimulator {
         keyUp?.post(tap: .cghidEventTap)
     }
     
+    // MARK: - On-Screen Keyboard Real-Time Keystroke Emulation
+    
+    func postVirtualKeyCode(_ keyCode: UInt16) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
+        keyDown?.post(tap: .cghidEventTap)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        keyUp?.post(tap: .cghidEventTap)
+    }
+    
+    func postUnicodeCharacter(_ char: String) {
+        let utf16Chars = Array(char.utf16)
+        guard !utf16Chars.isEmpty else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
+            utf16Chars.withUnsafeBufferPointer { buffer in
+                keyDown.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: buffer.baseAddress)
+            }
+            keyDown.post(tap: .cghidEventTap)
+        }
+        
+        if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
+            utf16Chars.withUnsafeBufferPointer { buffer in
+                keyUp.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: buffer.baseAddress)
+            }
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+    
+    func simulateClear() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        // Cmd + A (Select All)
+        let cmdFlags: CGEventFlags = [.maskCommand]
+        if let aDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
+            aDown.flags = cmdFlags
+            aDown.post(tap: .cghidEventTap)
+        }
+        if let aUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
+            aUp.flags = cmdFlags
+            aUp.post(tap: .cghidEventTap)
+        }
+        
+        // Backspace
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if let backspaceDown = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true) {
+                backspaceDown.post(tap: .cghidEventTap)
+            }
+            if let backspaceUp = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false) {
+                backspaceUp.post(tap: .cghidEventTap)
+            }
+        }
+    }
+    
     // MARK: - Helpers
     
     private func getCurrentMousePosition() -> CGPoint {

@@ -17,7 +17,7 @@ struct LauncherRootView: View {
 
             // Primary Content with Custom Overscan Safe-Area
             VStack {
-                if !vm.isKeyboardVisible && !vm.isAppSwitcherVisible && !vm.isCalibrating {
+                if !vm.isAppSwitcherVisible && !vm.isCalibrating {
                     VStack(alignment: .leading, spacing: 0) {
                         ScrollViewReader { scrollProxy in
                             ScrollView(.vertical, showsIndicators: false) {
@@ -128,9 +128,8 @@ struct LauncherRootView: View {
             }
             .padding(.horizontal, vm.overscanHorizontal)
             .padding(.vertical, vm.overscanVertical)
-            .blur(radius: (vm.isKeyboardVisible || vm.isAppSwitcherVisible || vm.isControllerSettingsVisible || vm.isCinematicPlayerVisible || vm.isProfileSwitcherVisible) ? 15 : 0)
-            .disabled(vm.isKeyboardVisible || vm.isAppSwitcherVisible || vm.isCalibrating || vm.isControllerSettingsVisible || vm.isCinematicPlayerVisible || vm.isProfileSwitcherVisible)
-            .animation(.easeInOut(duration: 0.3), value: vm.isKeyboardVisible)
+            .blur(radius: (vm.isAppSwitcherVisible || vm.isControllerSettingsVisible || vm.isCinematicPlayerVisible || vm.isProfileSwitcherVisible) ? 15 : 0)
+            .disabled(vm.isAppSwitcherVisible || vm.isCalibrating || vm.isControllerSettingsVisible || vm.isCinematicPlayerVisible || vm.isProfileSwitcherVisible)
             .animation(.easeInOut(duration: 0.3), value: vm.isAppSwitcherVisible)
 
 
@@ -192,9 +191,8 @@ struct LauncherRootView: View {
         .environment(registry)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .animation(.easeInOut(duration: 0.35), value: vm.isKeyboardVisible)
         .animation(.easeInOut(duration: 0.35), value: vm.isAppSwitcherVisible)
-        .animation(.easeInOut(duration: 0.3), value: vm.isCalibrating)
+        .animation(.easeInOut(duration: 0.35), value: vm.isCalibrating)
         .sheet(isPresented: $vm.isAddingItem) {
             AddItemSheet()
                 .environment(vm)

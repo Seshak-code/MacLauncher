@@ -29,6 +29,12 @@ final class GameControllerManager {
     private var isHomeDown = false
     private var isWestDown = false
     
+    // Button hold tracking timers
+    private var menuHoldTimer: Timer?
+    private var homeHoldTimer: Timer?
+    private var isMenuHoldTriggered = false
+    private var isHomeHoldTriggered = false
+    
     // Autorepeat states
     private var activeDpadDirection: MoveDirection?
     private var activeHeldDirection: MoveDirection?
@@ -173,7 +179,7 @@ final class GameControllerManager {
                 let justPressed = pressed && !isADown
                 isADown = pressed
                 if justPressed {
-                    if isLauncherActive {
+                    if isLauncherActive || viewModel?.isKeyboardVisible == true {
                         router?.handleSelect()
                     } else {
                         GlobalInputSimulator.shared.simulateLeftClick()
@@ -236,10 +242,29 @@ final class GameControllerManager {
                     }
                 }
             case gamepad.buttonMenu: // Start / Menu
-                let justPressed = pressed && !isMenuDown
-                isMenuDown = pressed
-                if justPressed {
-                    GlobalInputSimulator.shared.triggerOSAppSwitcher()
+                let pressed = button.isPressed
+                if pressed {
+                    if !isMenuDown {
+                        isMenuDown = true
+                        isMenuHoldTriggered = false
+                        menuHoldTimer?.invalidate()
+                        menuHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                            guard let self = self else { return }
+                            if self.isMenuDown {
+                                self.isMenuHoldTriggered = true
+                                self.router?.handleAppSwitcherHold()
+                            }
+                        }
+                    }
+                } else {
+                    if isMenuDown {
+                        isMenuDown = false
+                        menuHoldTimer?.invalidate()
+                        menuHoldTimer = nil
+                        if !isMenuHoldTriggered {
+                            router?.handleAppSwitcherTap()
+                        }
+                    }
                 }
             case gamepad.leftThumbstickButton: // L3
                 isL3Down = pressed
@@ -248,10 +273,29 @@ final class GameControllerManager {
                 isR3Down = pressed
                 checkStickCombo()
             case gamepad.buttonHome: // PS / Home button
-                let justPressed = pressed && !isHomeDown
-                isHomeDown = pressed
-                if justPressed {
-                    GlobalInputSimulator.shared.triggerOSAppSwitcher()
+                let pressed = button.isPressed
+                if pressed {
+                    if !isHomeDown {
+                        isHomeDown = true
+                        isHomeHoldTriggered = false
+                        homeHoldTimer?.invalidate()
+                        homeHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                            guard let self = self else { return }
+                            if self.isHomeDown {
+                                self.isHomeHoldTriggered = true
+                                self.router?.handleAppSwitcherHold()
+                            }
+                        }
+                    }
+                } else {
+                    if isHomeDown {
+                        isHomeDown = false
+                        homeHoldTimer?.invalidate()
+                        homeHoldTimer = nil
+                        if !isHomeHoldTriggered {
+                            router?.handleAppSwitcherTap()
+                        }
+                    }
                 }
             default:
                 break
@@ -403,8 +447,8 @@ final class GameControllerManager {
     
     private func checkStickCombo() {
         if isL3Down && isR3Down {
-            DispatchQueue.main.async {
-                GlobalInputSimulator.shared.triggerOSAppSwitcher()
+            DispatchQueue.main.async { [weak self] in
+                self?.router?.handleAppSwitcherTap()
             }
         }
     }

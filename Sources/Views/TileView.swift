@@ -68,9 +68,9 @@ struct TileView: View {
                         y: isFocused ? finalTiltHeight * 15.0 + 10.0 : 0
                     )
 
-                // Background artwork if dynamic metadata is available (Netflix style)
+                // Background artwork if dynamic metadata backdrop is available (Netflix style)
                 if let metadata = vm.appMetadataCache[item.id],
-                   let nsImage = metadata.cachedImage ?? metadata.cachedBackdrop {
+                   let nsImage = metadata.cachedBackdrop {
                     Image(nsImage: nsImage)
                         .resizable()
                         .scaledToFill()
@@ -86,9 +86,19 @@ struct TileView: View {
                             )
                         )
                 } else {
-                    // Fallback visual layout (Frosted panel with centered App icon/Emoji)
+                    // Fallback / Branding visual layout (Frosted panel with centered App icon/Emoji/Fetched Logo)
                     Group {
-                        if let bundleID = item.iconBundleID,
+                        if let metadata = vm.appMetadataCache[item.id],
+                           let cachedLogo = metadata.cachedImage {
+                            Image(nsImage: cachedLogo)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 72, height: 72)
+                                .cornerRadius(16)
+                                .rotationEffect(.degrees(gearRotation))
+                                .offset(y: bounceOffset)
+                                .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                        } else if let bundleID = item.iconBundleID,
                            !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                             
